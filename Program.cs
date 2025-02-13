@@ -1,40 +1,82 @@
-﻿using System.Collections.Concurrent;
+﻿using Microsoft.EntityFrameworkCore;
 using System.Transactions;
-using Microsoft.EntityFrameworkCore;
 
-namespace OracleApp;
+namespace OracleTransactionApp;
 
 internal class Program
 {
 	static async Task Main(string[] args)
 	{
-		Console.WriteLine(Environment.Version);
+		Console.WriteLine($".net version: {Environment.OSVersion}");
+		Console.WriteLine($".net version: {Environment.Version}");
+		Console.WriteLine("________________________________________________________________");
+		Console.WriteLine();
 
-		var dbContextFactory = new OracleContextFactory(supportAmbientTransaction: false);
-
-		using (var transaction = new TransactionScope(TransactionScopeAsyncFlowOption.Enabled))
+		var dbContextFactory = new OracleContextFactory();
+		var userId = 1;
+		while (true)
 		{
-			var tasks = new List<Task>();
+			try
+			{
+				using (var transaction1 = new TransactionScope(TransactionScopeOption.Required, TimeSpan.FromSeconds(2), TransactionScopeAsyncFlowOption.Enabled))
+				{
+					for (var i = 0; i < 1000; i++)
+					{
+						using (var contextNew = dbContextFactory.Create())
+						{
+							var user = await contextNew.Users.FirstAsync(s => s.Id == userId).ConfigureAwait(false);
+							user.LastChangeDate = DateTime.Now;
+							contextNew.Update(user);
+							await contextNew.SaveChangesAsync().ConfigureAwait(false);
+						}
+					}
 
-			var dbContext1 = dbContextFactory.Create();
-			var book1 = await dbContext1.Books.Where(x => x.Id == 1).FirstAsync();
-			book1.UpdateCount++;
-			dbContext1.Update(book1);
-			tasks.Add(dbContext1.SaveChangesAsync());
-			//await dbContext1.SaveChangesAsync();
+					transaction1.Complete();
+				}
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(DateTime.Now);
+				Console.WriteLine(e.Message);
+				if (e.InnerException is not null)
+				{
+					Console.WriteLine($"{nameof(e.InnerException)}: {e.InnerException.Message}");
+				}
 
-			var dbContext2 = dbContextFactory.Create();
-			var book2 = await dbContext2.Books.Where(x => x.Id == 2).FirstAsync();
-			book2.UpdateCount++;
-			dbContext2.Update(book2);
-			tasks.Add(dbContext2.SaveChangesAsync());
-			//await dbContext2.SaveChangesAsync();
-
-			await Task.WhenAll(tasks);
-
-			transaction.Complete();
+				Console.WriteLine("________________________________________________________________");
+				Console.WriteLine();
+				if (e.Message == "ORA-50012: Pooled connection request timed out")
+				{
+					break;
+				}
+			}
 		}
 
-		Console.WriteLine("Done!");
+		Console.WriteLine("Catch problem!");
+		for (var i = 0; i < 20; i++)
+		{
+			try
+			{
+				using (var contextNew = dbContextFactory.Create())
+				{
+					var user = await contextNew.Users.FirstAsync(s => s.Id == userId).ConfigureAwait(false);
+					user.LastChangeDate = DateTime.Now;
+					contextNew.Update(user);
+					await contextNew.SaveChangesAsync().ConfigureAwait(false);
+					Console.WriteLine(DateTime.Now);
+					Console.WriteLine("OK");
+				}
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine(e.Message);
+				if (e.InnerException is not null)
+				{
+					Console.WriteLine($"{nameof(e.InnerException)}: {e.InnerException.Message}");
+				}
+			}
+			Console.WriteLine("________________________________________________________________");
+			Console.WriteLine();
+		}
 	}
 }
